@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <vector>
 #include <set>
 #include <map>
 #include <string.h>
@@ -32,6 +33,7 @@ void Serialize(char* input_path, char* output_path) {
 
     std::map<std::uint32_t, std::set<Edge>> edges; // vertex -> set of adjacent edges
     std::set<std::uint32_t> vertices; // set of vertices
+    std::map<std::uint32_t, std::uint32_t> degree{}; // vertex -> its degree
 
     std::uint32_t from, to, weight;
     while (input >> from >> to >> weight) {     // fill in graph info
@@ -39,6 +41,10 @@ void Serialize(char* input_path, char* output_path) {
         edges[to].insert({from, (std::uint8_t)weight});
         vertices.insert(from);
         vertices.insert(to);
+        ++degree[from];
+        if (from != to) {
+            ++degree[to];
+        }
     }
     input.close();
 
@@ -51,10 +57,9 @@ void Serialize(char* input_path, char* output_path) {
     // on each step take vertexA with highest degree
     // and output its info like this: vertexA degree neigh1 weight1 neigh2 weight2 ...
     while (!vertices.empty()) {
-        auto predicate = [&edges](std::uint32_t u, std::uint32_t v) {
-            return edges[u].size() < edges[v].size();
-        };
-        std::uint32_t from = *std::max_element(vertices.begin(), vertices.end(), predicate);
+        std::uint32_t from = std::max_element(degree.begin(), degree.end(), [](const auto& x, const auto& y) {
+                                    return x.second < y.second;
+                                })->first;
         vertices.erase(from);
         output.write(reinterpret_cast<char*>(&from), sizeof(from));
         std::uint32_t sz = edges[from].size();
@@ -64,12 +69,14 @@ void Serialize(char* input_path, char* output_path) {
             output.write(reinterpret_cast<char*>(&weight), sizeof(weight));
             if (from != to) {
                 edges[to].erase({from, (std::uint8_t)weight});
-                if (edges[to].size() == 0) {
+                --degree[to];
+                if (degree[to] == 0) {
                     vertices.erase(to);
                 }
             }
         }
         edges[from].clear();
+        degree[from] = 0;
     }
     output.close();
 }
