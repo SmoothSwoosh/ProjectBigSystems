@@ -31,9 +31,16 @@ void Serialize(char* input_path, char* output_path) {
         exit(WRONG_FILE);
     }
 
+    std::ofstream output(output_path, std::ios_base::binary);
+    if (!output.is_open()) {
+        std::cout << "Wrong output file!" << std::endl;
+        exit(WRONG_FILE);
+    }
+
+
     std::map<std::uint32_t, std::set<Edge>> edges; // vertex -> set of adjacent edges
     std::set<std::uint32_t> vertices; // set of vertices
-    std::map<std::uint32_t, std::uint32_t> degree{}; // vertex -> its degree
+    std::set<std::pair<std::uint32_t, std::uint32_t>> vertex; // (degree, vertex)
 
     std::uint32_t from, to, weight;
     while (input >> from >> to >> weight) {     // fill in graph info
@@ -41,43 +48,47 @@ void Serialize(char* input_path, char* output_path) {
         edges[to].insert({from, (std::uint8_t)weight});
         vertices.insert(from);
         vertices.insert(to);
-        ++degree[from];
-        if (from != to) {
-            ++degree[to];
-        }
     }
     input.close();
 
-    std::ofstream output(output_path, std::ios_base::binary);
-    if (!output.is_open()) {
-        std::cout << "Wrong output file!" << std::endl;
-        exit(WRONG_FILE);
+    for (int v : vertices) {
+        vertex.insert({edges[v].size(), v});
     }
 
-    // on each step take vertexA with highest degree
-    // and output its info like this: vertexA degree neigh1 weight1 neigh2 weight2 ...
-    while (!vertices.empty()) {
-        std::uint32_t from = std::max_element(degree.begin(), degree.end(), [](const auto& x, const auto& y) {
-                                    return x.second < y.second;
-                                })->first;
-        vertices.erase(from);
-        output.write(reinterpret_cast<char*>(&from), sizeof(from));
-        std::uint32_t sz = edges[from].size();
-        output.write(reinterpret_cast<char*>(&sz), sizeof(sz));
+    std::map<std::uint32_t, std::vector<std::uint32_t>> degree_cluster; // degree -> set of vertices with such degree
+    while (!vertex.empty()) {
+        auto v = *vertex.rbegin();
+        std::uint32_t deg = v.first;
+        std::uint32_t from = v.second;
+        vertex.erase(std::prev(vertex.end()));
+        degree_cluster[deg].push_back(from);
         for (auto [to, weight] : edges[from]) {
-            output.write(reinterpret_cast<char*>(&to), sizeof(to));
-            output.write(reinterpret_cast<char*>(&weight), sizeof(weight));
             if (from != to) {
+                vertex.erase({edges[to].size(), to});
                 edges[to].erase({from, (std::uint8_t)weight});
-                --degree[to];
-                if (degree[to] == 0) {
-                    vertices.erase(to);
+                if (edges[to].size() != 0) {
+                    vertex.insert({edges[to].size(), to});
                 }
             }
         }
-        edges[from].clear();
-        degree[from] = 0;
     }
+
+    // fill in info
+    // degree cluster_size vi_from_cluster vj wij ...
+    for (auto it = degree_cluster.begin(); it != degree_cluster.end(); ++it) {
+        std::uint32_t degree = it->first;
+        output.write(reinterpret_cast<char*>(&degree), sizeof(degree));
+        std::uint32_t sz = it->second.size();
+        output.write(reinterpret_cast<char*>(&sz), sizeof(sz));
+        for (auto from : it->second) {
+            output.write(reinterpret_cast<char*>(&from), sizeof(from));
+            for (auto [to, weight] : edges[from]) {
+                output.write(reinterpret_cast<char*>(&to), sizeof(to));
+                output.write(reinterpret_cast<char*>(&weight), sizeof(weight));
+            }
+        }
+    }
+
     output.close();
 }
 
@@ -94,14 +105,17 @@ void Deserialize(char* input_path, char* output_path) {
         exit(WRONG_FILE);
     }
 
-    std::uint32_t from, to, sz;
+    std::uint32_t degree, from, to, sz;
     std::uint8_t weight;
-    while (input.read(reinterpret_cast<char*>(&from), sizeof(from))) {      // read from binary file
+    while (input.read(reinterpret_cast<char*>(&degree), sizeof(degree))) {      // read from binary file
         input.read(reinterpret_cast<char*>(&sz), sizeof(sz));
-        for (std::uint32_t i = 0; i < sz; ++i) {
-            input.read(reinterpret_cast<char*>(&to), sizeof(to));
-            input.read(reinterpret_cast<char*>(&weight), sizeof(weight));
-            output << from << "\t" << to << "\t" << (std::uint32_t)weight << "\n"; // output into tsv file
+        while (sz--) {
+            input.read(reinterpret_cast<char*>(&from), sizeof(from));
+            for (std::uint32_t i = 0; i < degree; ++i) {
+                input.read(reinterpret_cast<char*>(&to), sizeof(to));
+                input.read(reinterpret_cast<char*>(&weight), sizeof(weight));
+                output << from << "\t" << to << "\t" << (std::uint32_t)weight << "\n"; // output into tsv file
+            }
         }
     }
     input.close();
